@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, BellRing, Pause, Play, RotateCcw, Timer, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ModeToggle } from "@/components/molecules/ModeToggle";
-import { formatTime, ONE_HOUR_MS, remainingTime, scheduleAlarm } from "@/lib/clock";
+import { formatTime, FOUR_HOURS_MS, ONE_HOUR_MS, remainingTime, scheduleAlarm, scheduleTimerSounds } from "@/lib/clock";
 
 type Status = "ready" | "running" | "paused" | "finished";
 const STORAGE_KEY = "portfolio-clock";
@@ -20,13 +20,15 @@ export function ClockTimer() {
   const [restored, setRestored] = useState(false);
   const deadline = useRef<number | null>(null);
   const context = useRef<AudioContext | null>(null);
-  const alarm = useRef<AudioBufferSourceNode | null>(null);
+  const alarm = useRef<AudioBufferSourceNode[]>([]);
   const preview = useRef<AudioBufferSourceNode | null>(null);
 
   const stopAlarm = useCallback(() => {
-    alarm.current?.stop();
-    alarm.current?.disconnect();
-    alarm.current = null;
+    for (const source of alarm.current) {
+      source.stop();
+      source.disconnect();
+    }
+    alarm.current = [];
   }, []);
 
   const stopPreview = useCallback(() => {
@@ -56,7 +58,7 @@ export function ClockTimer() {
       const saved = JSON.parse(sessionStorage.getItem(STORAGE_KEY) || "null");
       if (
         saved &&
-        Number.isFinite(saved.duration) && saved.duration > 0 && saved.duration <= ONE_HOUR_MS &&
+        Number.isFinite(saved.duration) && saved.duration > 0 && saved.duration <= FOUR_HOURS_MS &&
         Number.isFinite(saved.remaining) && saved.remaining >= 0 && saved.remaining <= saved.duration &&
         ["ready", "running", "paused", "finished"].includes(saved.status) &&
         (saved.status !== "running" || (Number.isFinite(saved.deadline) && saved.deadline > 0))
@@ -107,7 +109,7 @@ export function ClockTimer() {
       // Reconcile the audio clock with wall time after sleep or suspension.
       if (context.current?.state === "running" && deadline.current !== null) {
         stopAlarm();
-        alarm.current = scheduleAlarm(context.current, remainingTime(deadline.current));
+        alarm.current = scheduleTimerSounds(context.current, duration, remainingTime(deadline.current));
       }
     };
     update();
@@ -119,7 +121,7 @@ export function ClockTimer() {
       document.removeEventListener("visibilitychange", catchUp);
       window.removeEventListener("pageshow", catchUp);
     };
-  }, [status, stopAlarm]);
+  }, [duration, status, stopAlarm]);
 
   useEffect(() => {
     document.title = status === "ready"
@@ -137,7 +139,7 @@ export function ClockTimer() {
       stopAlarm();
       const left = status === "finished" ? duration : remaining;
       deadline.current = Date.now() + left;
-      alarm.current = scheduleAlarm(audio, left);
+      alarm.current = scheduleTimerSounds(audio, duration, left);
       setRemaining(left);
       setStatus("running");
     } catch {
@@ -165,17 +167,17 @@ export function ClockTimer() {
     setError("");
   };
 
-  const testSound = async () => {
+  const testSound = async (hourly = false) => {
     setStarting(true);
     try {
       const audio = await enableAudio();
       stopPreview();
       if (status === "running" || status === "finished") {
         stopAlarm();
-        alarm.current = scheduleAlarm(audio, status === "finished" ? 0 : remainingTime(deadline.current!));
+        alarm.current = scheduleTimerSounds(audio, duration, status === "finished" ? 0 : remainingTime(deadline.current!));
       }
       if (status === "finished") return;
-      const sound = scheduleAlarm(audio, 0);
+      const sound = scheduleAlarm(audio, 0, hourly ? "hourly" : duration === FOUR_HOURS_MS ? "celebration" : "alarm");
       sound.loop = false;
       preview.current = sound;
     } catch {
@@ -202,7 +204,7 @@ export function ClockTimer() {
           <span className="mb-4 inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
             <Timer className="size-3.5" aria-hidden="true" /> A little time to focus
           </span>
-          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Make this hour yours.</h1>
+          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Make this time yours.</h1>
           <p className="mt-3 text-muted-foreground">Pick a duration, press start, and take one thing at a time.</p>
         </div>
 
@@ -225,10 +227,10 @@ export function ClockTimer() {
             <div className="h-full rounded-full bg-primary transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${progress}%` }} />
           </div>
 
-          <div className="mb-8 flex justify-center gap-2" role="group" aria-label="Timer duration">
-            {[15, 30, 60].map((minutes) => (
+          <div className="mb-8 flex flex-wrap justify-center gap-2" role="group" aria-label="Timer duration">
+            {[15, 30, 60, 240].map((minutes) => (
               <Button key={minutes} variant={duration === minutes * 60000 ? "secondary" : "ghost"} size="sm" aria-pressed={duration === minutes * 60000} disabled={!restored || status !== "ready" || starting} onClick={() => reset(minutes * 60000)}>
-                {minutes === 60 ? "1 hour" : `${minutes} min`}
+                {minutes >= 60 ? `${minutes / 60} ${minutes === 60 ? "hour" : "hours"}` : `${minutes} min`}
               </Button>
             ))}
           </div>
@@ -245,17 +247,18 @@ export function ClockTimer() {
           </div>
 
           <div className="mt-6 text-center">
-            <Button variant="link" size="sm" onClick={testSound} disabled={starting || !restored}><Volume2 aria-hidden="true" /> Test sound</Button>
-            <p className="mt-1 text-xs text-muted-foreground">The alarm repeats until you dismiss it.</p>
+            <Button variant="link" size="sm" onClick={() => testSound()} disabled={starting || !restored}><Volume2 aria-hidden="true" /> {duration === FOUR_HOURS_MS ? "Test celebration" : "Test sound"}</Button>
+            {duration === FOUR_HOURS_MS && <Button variant="link" size="sm" onClick={() => testSound(true)} disabled={starting || !restored || finished}><Volume2 aria-hidden="true" /> Test hourly chime</Button>}
+            <p className="mt-1 text-xs text-muted-foreground">{duration === FOUR_HOURS_MS ? "A brief chime marks each hour and stops automatically. The final celebration repeats until dismissed." : "The alarm repeats until you dismiss it."}</p>
           </div>
           {error && <p role="alert" className="mt-4 text-center text-sm text-destructive">{error}</p>}
-          {status !== "ready" && !soundReady && !error && <p role="status" className="mt-4 text-center text-sm text-muted-foreground">Click “Test sound” to enable the alarm after a refresh or audio interruption.</p>}
+          {status !== "ready" && !soundReady && !error && <p role="status" className="mt-4 text-center text-sm text-muted-foreground">Click “{duration === FOUR_HOURS_MS ? "Test celebration" : "Test sound"}” to enable the alarm after a refresh or audio interruption.</p>}
         </section>
 
         <aside className="mt-6 rounded-2xl border border-border bg-muted/50 p-5 text-sm leading-relaxed text-muted-foreground">
           <h2 className="mb-1 font-medium text-foreground">Can I switch tabs?</h2>
           <p>Yes. The alarm is scheduled to play even while you’re in another tab. Keep this page open, your device awake, and the tab and speakers unmuted. Browser power saving, a locked phone, or a suspended tab can delay or prevent the sound.</p>
-          <p className="mt-2">Refreshing keeps your countdown in this tab. Click “Test sound” afterwards to enable the alarm again.</p>
+          <p className="mt-2">Refreshing keeps your countdown in this tab. Use the sound test afterwards to enable the alarm again.</p>
         </aside>
       </div>
     </main>
