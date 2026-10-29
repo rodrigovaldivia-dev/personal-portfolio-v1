@@ -223,7 +223,7 @@ export function ClockTimer() {
             </p>
           </div>
 
-          <div role="progressbar" aria-label="Session progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)} className="mb-8 h-1.5 overflow-hidden rounded-full bg-secondary">
+          <div role="progressbar" aria-label="Session progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)} className="mb-8 h-1.5 overflow-hidden rounded-full bg-secondary dark:bg-muted-foreground/50">
             <div className="h-full rounded-full bg-primary transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${progress}%` }} />
           </div>
 
